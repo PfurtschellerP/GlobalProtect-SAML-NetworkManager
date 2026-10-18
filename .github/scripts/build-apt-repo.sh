@@ -210,7 +210,7 @@ done
 if [ -f "$TEMPLATE" ]; then
     sed -e "s|__FINGERPRINT__|$fingerprint|g" \
         -e "s|__UPDATED__|$(date -u '+%Y-%m-%d %H:%M UTC')|g" \
-        -e "s|__VERSION_ROWS__|$version_rows|g" \
+        -e "s|__VERSION_ROWS_UBUNTU__|$version_rows|g" \
         "$TEMPLATE" > index.html
 else
     log "WARNING: $TEMPLATE not found, no landing page generated"

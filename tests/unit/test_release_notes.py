@@ -47,12 +47,25 @@ def asset_name(package, codename, arch, version=VERSION):
     return "%s_%s.%s1_%s.deb" % (package, version, codename, arch)
 
 
+def rpm_asset_name(package, fedora, arch, version=VERSION):
+    return "%s-%s-1.fc%s.%s.rpm" % (package, version, fedora, arch)
+
+
 def asset(name, url=None, state="uploaded"):
     return {"name": name, "url": url or "%s/%s" % (BASE, name), "size": 1, "state": state}
 
 
 def full_matrix():
     return [asset(asset_name(p, c, a)) for c in CODENAMES for a in ("amd64", "arm64") for p in PACKAGES]
+
+
+def rpm_matrix():
+    return [
+        asset(rpm_asset_name(p, fedora, arch))
+        for fedora in ("44",)
+        for arch in ("x86_64", "aarch64")
+        for p in PACKAGES
+    ]
 
 
 def debs(*specs, codename="noble", arch="amd64"):
@@ -125,6 +138,27 @@ def test_both_spellings_of_the_asset_name_are_parsed(name):
     assert codename == "noble"
     assert arch in ("amd64", "arm64")
     assert short in ("plasma", "gpclient")
+
+
+def test_rpm_asset_names_are_parsed():
+    assert release_notes.parse_rpm(
+        rpm_asset_name(PACKAGES[1], "41", "aarch64")
+    ) == ("41", "aarch64", "gnome")
+
+
+def test_rpm_downloads_have_a_fedora_table(tmp_path):
+    out = run(tmp_path, rpm_matrix()).stdout
+    rows = table_rows(out)
+    assert "| Fedora | x86_64 | aarch64 |" in rows
+    assert any(row.startswith("| Fedora 44 |") for row in rows)
+    assert "[gnome](" in out
+    assert "docs/RPM_REPO.md" in out
+
+
+def test_source_rpm_is_not_added_to_the_binary_download_table(tmp_path):
+    source = asset("network-manager-gpclient-%s-1.fc44.src.rpm" % VERSION)
+    out = run(tmp_path, rpm_matrix() + [source]).stdout
+    assert source["name"] not in out
 
 
 def test_text_of_the_notes_points_to_apt_and_the_install_command(tmp_path):
@@ -242,7 +276,7 @@ def test_deb_asset_that_does_not_match_is_an_error(tmp_path, name):
 
 @pytest.mark.parametrize("assets", [[], [asset("README.md"), asset("notes.txt")]])
 def test_no_deb_assets_is_an_error(tmp_path, assets):
-    refused(run(tmp_path, assets), "no .deb")
+    refused(run(tmp_path, assets), "no .deb or binary .rpm")
 
 
 # Only an asset that has finished uploading has a link that works
@@ -278,7 +312,8 @@ def test_uploaded_asset_is_linked(tmp_path):
 
 @pytest.mark.parametrize("state", ["starter", "open", None])
 def test_only_assets_not_uploaded_is_the_no_deb_error(tmp_path, state):
-    refused(run(tmp_path, [asset(asset_name(PACKAGES[0], "noble", "amd64"), state=state)]), "no .deb")
+    refused(run(tmp_path, [asset(asset_name(PACKAGES[0], "noble", "amd64"), state=state)]),
+            "no .deb or binary .rpm")
 
 
 def test_a_url_of_an_asset_that_is_not_uploaded_is_not_checked(tmp_path):
@@ -515,7 +550,7 @@ def matrix_versions():
         text = handle.read()
     found = {tuple(json.loads(m)) for m in re.findall(r"fromJSON\('(\[[^']*\])'\)", text)}
     assert len(found) == 1, "the matrix is listed in more than one way: %s" % (found,)
-    return set(found.pop())
+    return {version.removeprefix("ubuntu") for version in found.pop() if version.startswith("ubuntu")}
 
 
 def apt_suites():

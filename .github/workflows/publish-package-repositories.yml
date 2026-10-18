@@ -1,9 +1,9 @@
-name: Publish APT repository
+name: Publish package repositories
 
-# Publishes the apt repository to GitHub Pages.
+# Publishes the APT and RPM repositories to GitHub Pages.
 #
 # GitHub Releases are the source of truth: every run rebuilds the whole
-# repository from the .deb assets of all published releases, so the run is
+# repositories from the package assets of all published releases, so the run is
 # idempotent and the repository can be recreated from scratch at any time
 # (after a key rotation, for example). Nothing is committed to the repo.
 #
@@ -36,7 +36,7 @@ jobs:
       - name: Install repository tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y dpkg-dev apt-utils
+          sudo apt-get install -y dpkg-dev apt-utils createrepo-c
 
       - name: Import signing key
         env:
@@ -78,12 +78,22 @@ jobs:
             echo "::group::$tag"
             gh release download "$tag" -D incoming --pattern '*.deb' --clobber \
               || echo "::warning::$tag has no .deb assets"
+            gh release download "$tag" -D incoming --pattern '*.rpm' --clobber \
+              || echo "::warning::$tag has no .rpm assets"
             echo "::endgroup::"
           done < tags.txt
           ls -la incoming
 
       - name: Build the repository
         run: bash .github/scripts/build-apt-repo.sh incoming site "$APT_GPG_KEY"
+
+      - name: Build the RPM repository
+        run: |
+          if find incoming -maxdepth 1 -type f -name '*.rpm' ! -name '*.src.rpm' | grep -q .; then
+            bash .github/scripts/build-rpm-repo.sh incoming site/rpm "$APT_GPG_KEY"
+          else
+            echo "::warning::No RPM assets found; publishing APT only"
+          fi
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

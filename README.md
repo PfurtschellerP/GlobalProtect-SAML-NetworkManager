@@ -20,7 +20,9 @@ NetworkManager VPN plugin for GlobalProtect (Palo Alto Networks) with SAML/SSO a
 
 ## Installation
 
-Add the apt repository and install - dependencies, upgrades and the GNOME/Plasma
+### Ubuntu (APT) Installation
+
+Add the APT repository and install - dependencies, upgrades and the GNOME/Plasma
 choice are handled by apt:
 
 ```bash
@@ -47,6 +49,34 @@ removal instructions: [docs/APT_REPO.md](docs/APT_REPO.md).
 ```bash
 pip3 install sdbus
 ```
+
+### Fedora 44 and compatible distributions
+
+Fedora 44 packages are available for `x86_64` and `aarch64` from the signed
+[RPM repository](docs/RPM_REPO.md). Install the runtime Python module first,
+because Fedora 44 does not provide `python3-sdbus` as an RPM:
+
+```bash
+python3 -m pip install --user sdbus
+
+sudo rpm --import https://wmp.github.io/GlobalProtect-SAML-NetworkManager/rpm/gpclient-rpm-keyring.gpg
+
+sudo tee /etc/yum.repos.d/gpclient.repo <<'EOF'
+[gpclient]
+name=GlobalProtect NetworkManager plugin
+baseurl=https://wmp.github.io/GlobalProtect-SAML-NetworkManager/rpm
+enabled=1
+gpgcheck=0
+repo_gpgcheck=1
+gpgkey=https://wmp.github.io/GlobalProtect-SAML-NetworkManager/rpm/gpclient-rpm-keyring.gpg
+EOF
+
+sudo dnf install network-manager-gpclient-gnome
+```
+
+For KDE Plasma, install `network-manager-gpclient-plasma` instead.
+See [docs/RPM_REPO.md](docs/RPM_REPO.md) for repository removal and local
+build instructions.
 
 <details>
 <summary>Alternative: individual .deb files</summary>
@@ -187,7 +217,7 @@ The password for `auth-mode=credentials` is a secret, not data:
 │   └── plasma/                 # KDE Plasma plugin (C++/Qt)
 ├── config/                     # NetworkManager & systemd configuration
 ├── .github/
-│   ├── scripts/                # build-apt-repo.sh (apt repository builder)
+│   ├── scripts/                # APT/RPM repository and release helpers
 │   └── workflows/              # build/release and Pages publishing
 ├── scripts/                    # Helper scripts (browser-wrapper)
 ├── external/
@@ -206,9 +236,9 @@ The password for `auth-mode=credentials` is a secret, not data:
 ### Build
 
 ```bash
-./build-all.sh          # Build for all Ubuntu versions (22.04, 24.04, 26.04)
-./build-all.sh 24.04    # Build for Ubuntu 24.04 only
-./build-all.sh 26.04    # Build for Ubuntu 26.04 only (Plasma 6 / Qt6 / KF6)
+./build-all.sh          # Build packages for all platforms and versions
+./build-all.sh ubuntu24.04 # Build for Ubuntu 24.04 only
+./build-all.sh ubuntu26.04 # Build for Ubuntu 26.04 only (Plasma 6 / Qt6 / KF6)
 ```
 
 Notes for Ubuntu 26.04:
@@ -350,7 +380,8 @@ Debug logs are written to `/tmp/vpnc-script2.log`.
 ## Documentation
 
 - [docs/README.md](docs/README.md) - Full documentation
-- [docs/APT_REPO.md](docs/APT_REPO.md) - apt repository: using it, releasing, key rotation
+- [docs/APT_REPO.md](docs/APT_REPO.md) - APT repository: using it, releasing, key rotation
+- [docs/RPM_REPO.md](docs/RPM_REPO.md) - RPM repository: using it, releasing, key rotation
 - [docs/EDGE_WRAPPER.md](docs/EDGE_WRAPPER.md) - Browser wrapper and browser integration
 - [docs/PYTHON_SERVICE.md](docs/PYTHON_SERVICE.md) - Service implementation details
 - [docs/INTERACTIVE_AUTH.md](docs/INTERACTIVE_AUTH.md) - Standard login / RSA token / OTP authentication, gateway selection

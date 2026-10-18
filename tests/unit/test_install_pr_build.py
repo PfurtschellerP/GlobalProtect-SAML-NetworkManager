@@ -1,8 +1,8 @@
 """
 Tests for scripts/install-pr-build.sh, which installs the test packages of a
-pull request (release "pr-<N>") with apt.
+pull request (release "pr-<N>") with apt or dnf.
 
-curl, dpkg, dpkg-query, id, sudo and apt are fakes found through PATH, the os-release file
+curl, dpkg, dpkg-query, id, sudo, apt and dnf are fakes found through PATH, the os-release file
 is a fixture and the release API is a file: nothing touches the network, apt or
 the real system. Every positive test has negative counterparts: whatever is
 rejected exits non-zero with a message and never reaches apt.
@@ -48,6 +48,10 @@ def deb(suffix, codename, arch, tilde=False, build=""):
     return f"{CORE}{suffix}_{VERSION}{sep}{codename}1{build}_{arch}.deb"
 
 
+def rpm(suffix, arch="x86_64", build=""):
+    return f"{CORE}{suffix}-{VERSION}-1.fc44{build}.{arch}.rpm"
+
+
 def all_assets(tilde=False, build=""):
     return [
         deb(suffix, codename, arch, tilde, build)
@@ -57,7 +61,12 @@ def all_assets(tilde=False, build=""):
     ] + [deb("-plasma-6", "noble", "amd64", tilde, build)]
 
 
+def all_rpm_assets(build=""):
+    return [rpm(suffix, build=build) for suffix in ("", "-gnome", "-plasma")]
+
+
 OS_RELEASE = 'NAME="Ubuntu"\nID=ubuntu\nID_LIKE=debian\nVERSION_ID="{version}"\nVERSION_CODENAME={codename}\n'
+FEDORA_OS_RELEASE = 'NAME="Fedora Linux"\nID=fedora\nVERSION_ID="44"\n'
 # KDE neon User Edition: Ubuntu 24.04 with Plasma 6
 NEON_OS_RELEASE = 'NAME="KDE neon"\nID=neon\nID_LIKE="ubuntu debian"\nVERSION_ID="24.04"\nVERSION_CODENAME=noble\n'
 
@@ -145,6 +154,18 @@ fi
 exit "${FAKE_APT_EXIT:-0}"
 """
 
+FAKE_DNF = r"""#!/bin/bash
+{
+    printf '%s\n' "$@"
+} > "$FAKE_DIR/dnf_args"
+for arg in "$@"; do
+    case "$arg" in
+        /*.rpm) cat "$arg" >> "$FAKE_DIR/dnf_payloads"; stat -c '%a' "$arg" >> "$FAKE_DIR/dnf_modes" ;;
+    esac
+done
+exit "${FAKE_DNF_EXIT:-0}"
+"""
+
 
 class Sandbox:
     """A fake machine: fake tools, os-release, release API and assets."""
@@ -158,7 +179,7 @@ class Sandbox:
             directory.mkdir()
         for name, body in (
             ("curl", FAKE_CURL), ("dpkg", FAKE_DPKG), ("dpkg-query", FAKE_DPKG_QUERY),
-            ("id", FAKE_ID), ("sudo", FAKE_SUDO), ("apt", FAKE_APT),
+            ("id", FAKE_ID), ("sudo", FAKE_SUDO), ("apt", FAKE_APT), ("dnf", FAKE_DNF),
         ):
             path = self.bin / name
             path.write_text(body)
@@ -227,6 +248,14 @@ class Sandbox:
         args = self.apt_args()
         return None if args is None else [os.path.basename(a) for a in args if a.endswith(".deb")]
 
+    def dnf_args(self):
+        text = self.read("dnf_args")
+        return None if text is None else text.splitlines()
+
+    def installed_rpms(self):
+        args = self.dnf_args()
+        return None if args is None else [os.path.basename(a) for a in args if a.endswith(".rpm")]
+
     def curl_urls(self):
         return (self.read("curl_urls") or "").splitlines()
 
@@ -248,6 +277,34 @@ def assert_rejected(box, result, message, network=True):
 
 
 class TestInstall:
+    @pytest.mark.parametrize("desktop, suffix", [("gnome", "-gnome"), ("plasma", "-plasma")])
+    def test_fedora44_installs_the_core_and_desktop_rpms(self, box, desktop, suffix):
+        box.set_os("fedora", FEDORA_OS_RELEASE)
+        box.set_assets(all_rpm_assets())
+
+        result = box.run("--desktop", desktop, "24")
+
+        assert result.returncode == 0, result.stderr
+        assert box.installed_rpms() == [rpm(""), rpm(suffix)]
+        assert box.dnf_args()[:1] == ["install"]
+        assert box.apt_args() is None
+
+    def test_fedora44_pr_build_rpms_are_selected(self, box):
+        box.set_os("fedora", FEDORA_OS_RELEASE)
+        box.set_assets(all_rpm_assets(BUILD))
+
+        result = box.run("24")
+
+        assert result.returncode == 0, result.stderr
+        assert box.installed_rpms() == [rpm("", build=BUILD), rpm("-gnome", build=BUILD)]
+
+    def test_fedora_versions_other_than_44_are_rejected(self, box):
+        box.set_os("fedora", 'NAME="Fedora Linux"\nID=fedora\nVERSION_ID="43"\n')
+
+        result = box.run("24")
+
+        assert_rejected(box, result, "Fedora 43 is not supported", network=False)
+
     @pytest.mark.parametrize(
         "codename, arch, desktop, expected",
         [
@@ -476,12 +533,12 @@ class TestRejected:
     @pytest.mark.parametrize(
         "content, message",
         [
-            ('ID=debian\nVERSION_ID="12"\nVERSION_CODENAME=bookworm\n', "not Ubuntu"),
-            ('ID=linuxmint\nID_LIKE="ubuntu debian"\nVERSION_ID="21"\nVERSION_CODENAME=vanessa\n', "not Ubuntu"),
-            ("", "not Ubuntu"),
-            ("ID=fedora\nVERSION_ID=40\n", "not Ubuntu"),
-            ('ID=neonlike\nID_LIKE="ubuntu debian"\nVERSION_ID="24.04"\nVERSION_CODENAME=noble\n', "not Ubuntu or KDE neon"),
-            ('ID="neon;x"\nVERSION_ID="24.04"\nVERSION_CODENAME=noble\n', "not Ubuntu or KDE neon"),
+            ('ID=debian\nVERSION_ID="12"\nVERSION_CODENAME=bookworm\n', "not Ubuntu, KDE neon or Fedora"),
+            ('ID=linuxmint\nID_LIKE="ubuntu debian"\nVERSION_ID="21"\nVERSION_CODENAME=vanessa\n', "not Ubuntu, KDE neon or Fedora"),
+            ("", "not Ubuntu, KDE neon or Fedora"),
+            ("ID=fedora\nVERSION_ID=40\n", "Fedora 40 is not supported"),
+            ('ID=neonlike\nID_LIKE="ubuntu debian"\nVERSION_ID="24.04"\nVERSION_CODENAME=noble\n', "not Ubuntu, KDE neon or Fedora"),
+            ('ID="neon;x"\nVERSION_ID="24.04"\nVERSION_CODENAME=noble\n', "not Ubuntu, KDE neon or Fedora"),
         ],
     )
     def test_other_distributions(self, box, content, message):

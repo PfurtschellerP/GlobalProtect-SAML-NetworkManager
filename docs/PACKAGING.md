@@ -1,6 +1,13 @@
-# Debian Package Structure
+# Debian and RPM Package Structure
 
-This project builds **3 separate Debian packages** to support different desktop environments.
+The CI uses one consolidated `build-release.yml` matrix for Ubuntu and Fedora:
+Ubuntu entries build Debian packages in Ubuntu containers, while the Fedora 44
+entries build RPMs in Fedora containers. The local `build-all.sh` helper, also
+available through the Makefile, builds both Debian and RPM packages using the
+corresponding containers.
+
+This project builds three package roles, with an additional Plasma 6 variant
+for KDE neon on Ubuntu 24.04.
 
 ## Package Overview
 
@@ -103,27 +110,37 @@ on `plasma-nm (<< 4:6)`, so apt refuses it on Plasma 6.
 ### Recommended method (Docker-based):
 
 ```bash
-# Build for all Ubuntu versions
+# Build for all supported distributions and versions
 ./build-all.sh
 
-# Build for specific version
-./build-all.sh 24.04
-./build-all.sh 22.04
+# Build for specific Ubuntu versions
+./build-all.sh ubuntu24.04
+./build-all.sh ubuntu22.04
+
+# Build Fedora 44 RPM packages
+./build-all.sh fedora44
 ```
 
 Packages will be in:
-- `output/ubuntu24.04/*.deb`
 - `output/ubuntu22.04/*.deb`
+- `output/ubuntu24.04/*.deb`
+- `output/ubuntu24.10/*.deb`
+- `output/ubuntu26.04/*.deb`
+- `output/fedora44/*.rpm`
 
-### Local build:
+### Local Debian build:
 
 ```bash
 dpkg-buildpackage -us -uc -b
 ```
 
+For a local Fedora build, use `./build-all.sh fedora44`.
+
 ## Installation
 
-Download packages from [GitHub Releases](https://github.com/WMP/GlobalProtect-SAML-NetworkManager/releases) for your Ubuntu version.
+Download packages from [GitHub Releases](https://github.com/WMP/GlobalProtect-SAML-NetworkManager/releases)
+for your Ubuntu or Fedora version. For repository installation, see the
+[APT repository](APT_REPO.md) and [RPM repository](RPM_REPO.md) instructions.
 
 Install two packages:
 1. **network-manager-gpclient** - core package (required)
@@ -170,4 +187,13 @@ dpkg -l | grep network-manager-gpclient
 dpkg -L network-manager-gpclient
 dpkg -L network-manager-gpclient-gnome
 dpkg -L network-manager-gpclient-plasma
+```
+
+For Fedora RPM packages:
+
+```bash
+rpm -qa | grep network-manager-gpclient
+rpm -ql network-manager-gpclient
+rpm -ql network-manager-gpclient-gnome
+rpm -ql network-manager-gpclient-plasma
 ```

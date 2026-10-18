@@ -15,7 +15,7 @@ A NetworkManager VPN plugin for GlobalProtect with GUI configuration support for
 
 ### From Release (Recommended)
 
-Download packages from [GitHub Releases](https://github.com/WMP/GlobalProtect-SAML-NetworkManager/releases) for your Ubuntu version.
+Download packages from [GitHub Releases](https://github.com/WMP/GlobalProtect-SAML-NetworkManager/releases) for your Ubuntu or Fedora version.
 
 Install two packages:
 1. **network-manager-gpclient** - core package (required)
@@ -28,11 +28,13 @@ sudo dpkg -i <downloaded-packages>.deb
 sudo apt-get install -f  # install dependencies
 ```
 
+Fedora 44 users should follow [RPM repository installation](RPM_REPO.md).
+
 ### Building from Source
 
 ```bash
-./build-all.sh          # Build for all Ubuntu versions
-./build-all.sh 24.04    # Build for Ubuntu 24.04 only
+./build-all.sh          # Build for all supported distributions and versions
+./build-all.sh ubuntu24.04 # Build for Ubuntu 24.04 only
 ```
 
 ## Configuring Your VPN

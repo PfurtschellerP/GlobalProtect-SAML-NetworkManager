@@ -6,8 +6,9 @@
 #
 # CI publishes every open pull request as the prerelease "pr-<N>" (see
 # .github/workflows/pr-test-packages.yml) and removes it when the PR closes. This
-# picks the .deb files for your Ubuntu release, architecture and desktop from that
-# release and hands them to apt. apt asks for confirmation unless --yes is given.
+# picks the package files for your OS, architecture and desktop from that release
+# and hands them to apt or dnf. The package manager asks for confirmation unless
+# --yes is given.
 #
 # On Ubuntu 24.04 the Plasma editor is network-manager-gpclient-plasma-6 (built
 # against the KDE neon repository) on KDE neon, and network-manager-gpclient-plasma
@@ -20,6 +21,8 @@
 #
 # Run it as `bash <(curl ...)`, not `curl ... | bash`: apt asks its question on
 # the terminal, and a pipe would take stdin away.
+#
+# Fedora 44 is supported for RPM packages on x86_64 and aarch64.
 #
 # Test hooks: OS_RELEASE_FILE (default /etc/os-release) and GP_RELEASE_API
 # (default https://api.github.com/repos/<the repository>).
@@ -45,7 +48,7 @@ usage: install-pr-build.sh <PR number> [--desktop gnome|plasma|plasma-6] [--repo
                        whatever the system is
   --repo OWNER/REPO    the GitHub repository that published the packages
                        (default: WMP/GlobalProtect-SAML-NetworkManager)
-  --yes                do not ask apt for confirmation (apt install -y)
+  --yes                do not ask apt/dnf for confirmation
 EOF
 }
 
@@ -107,41 +110,49 @@ os_value() {
     printf '%s' "$value"
 }
 
-[ -r "$OS_RELEASE" ] || die "cannot read $OS_RELEASE: this script supports Ubuntu only"
+[ -r "$OS_RELEASE" ] || die "cannot read $OS_RELEASE: this script supports Ubuntu only, plus KDE neon and Fedora 44"
 os_id="$(os_value ID)"
-# KDE neon is Ubuntu 24.04 with Plasma 6
 case "$os_id" in
-    ubuntu|neon) ;;
-    *) die "this is '$os_id', not Ubuntu or KDE neon: the test packages are built for Ubuntu 22.04, 24.04, 24.10 and 26.04 (and KDE neon, which is Ubuntu 24.04 with Plasma 6) only" ;;
+    ubuntu|neon) package_format=deb ;;
+    fedora) package_format=rpm ;;
+    *) die "this is '$os_id', not Ubuntu, KDE neon or Fedora: test packages are built for Ubuntu 22.04, 24.04, 24.10, 26.04 and Fedora 44 only" ;;
 esac
 
 version_id="$(os_value VERSION_ID)"
-codename="$(os_value VERSION_CODENAME)"
-if [ -z "$codename" ]; then
-    case "$version_id" in
-        22.04) codename=jammy ;;
-        24.04) codename=noble ;;
-        24.10) codename=oracular ;;
-        26.04) codename=resolute ;;
+if [ "$package_format" = deb ]; then
+    codename="$(os_value VERSION_CODENAME)"
+    if [ -z "$codename" ]; then
+        case "$version_id" in
+            22.04) codename=jammy ;;
+            24.04) codename=noble ;;
+            24.10) codename=oracular ;;
+            26.04) codename=resolute ;;
+        esac
+    fi
+    case "$codename" in
+        jammy|noble|oracular|resolute) ;;
+        *) die "Ubuntu ${version_id:-?} (${codename:-unknown}) is not supported: the test packages are built for jammy (22.04), noble (24.04), oracular (24.10) and resolute (26.04)" ;;
     esac
+    [ "$os_id" != "neon" ] || [ "$codename" = "noble" ] \
+        || die "KDE neon is supported on its Ubuntu 24.04 (noble) base only, not on ${codename:-unknown}"
+    arch="$(dpkg --print-architecture)"
+    case "$arch" in
+        amd64|arm64) ;;
+        *) die "architecture '$arch' is not supported: the test packages are built for amd64 and arm64" ;;
+    esac
+    [ "$desktop" != "plasma-6" ] || [ "$codename" = "noble" ] \
+        || die "--desktop plasma-6 is for Ubuntu 24.04 (noble) only, not ${codename:-unknown}: the other releases have one Plasma package, network-manager-gpclient-plasma"
+    release_id="$codename"
+else
+    [ "$version_id" = "44" ] || die "Fedora ${version_id:-?} is not supported: the test packages are built for Fedora 44"
+    case "$(uname -m)" in
+        x86_64) arch=x86_64 ;;
+        aarch64) arch=aarch64 ;;
+        *) die "architecture '$(uname -m)' is not supported: Fedora test packages are built for x86_64 and aarch64" ;;
+    esac
+    [ "$desktop" != "plasma-6" ] || die "--desktop plasma-6 is for Ubuntu 24.04 (noble) only"
+    release_id=44
 fi
-# Same suites as .github/scripts/build-apt-repo.sh
-case "$codename" in
-    jammy|noble|oracular|resolute) ;;
-    *) die "Ubuntu ${version_id:-?} (${codename:-unknown}) is not supported: the test packages are built for jammy (22.04), noble (24.04), oracular (24.10) and resolute (26.04)" ;;
-esac
-
-[ "$os_id" != "neon" ] || [ "$codename" = "noble" ] \
-    || die "KDE neon is supported on its Ubuntu 24.04 (noble) base only, not on ${codename:-unknown}"
-
-arch="$(dpkg --print-architecture)"
-case "$arch" in
-    amd64|arm64) ;;
-    *) die "architecture '$arch' is not supported: the test packages are built for amd64 and arm64" ;;
-esac
-
-[ "$desktop" != "plasma-6" ] || [ "$codename" = "noble" ] \
-    || die "--desktop plasma-6 is for Ubuntu 24.04 (noble) only, not ${codename:-unknown}: the other releases have one Plasma package, network-manager-gpclient-plasma"
 
 if [ -z "$desktop" ]; then
     case "${XDG_CURRENT_DESKTOP:-}" in
@@ -159,7 +170,7 @@ plasma_package="network-manager-gpclient-plasma"
 if [ "$desktop" = plasma-6 ]; then
     plasma_package="network-manager-gpclient-plasma-6"
     desktop=plasma
-elif [ "$desktop" = plasma ] && [ "$codename" = noble ]; then
+elif [ "$package_format" = deb ] && [ "$desktop" = plasma ] && [ "$codename" = noble ]; then
     if [ "$os_id" = neon ]; then
         plasma_package="network-manager-gpclient-plasma-6"
     else
@@ -197,12 +208,12 @@ esac
 # none). GitHub stores the "~" of a release asset as "." (1.4.2-1.noble1), so
 # both are accepted. The names come from the release listing and are matched
 # strictly before they are used anywhere.
-selection="$(python3 - "$tmp/release.json" "$codename" "$arch" "$desktop" "$pr" "$plasma_package" <<'PY'
+selection="$(python3 - "$tmp/release.json" "$package_format" "$release_id" "$arch" "$desktop" "$pr" "$plasma_package" <<'PY'
 import json
 import re
 import sys
 
-path, codename, arch, desktop, pr, plasma_package = sys.argv[1:7]
+path, package_format, release_id, arch, desktop, pr, plasma_package = sys.argv[1:8]
 try:
     with open(path, encoding="utf-8") as handle:
         assets = json.load(handle).get("assets", [])
@@ -213,10 +224,17 @@ if not isinstance(assets, list):
 
 
 def find(package):
-    pattern = re.compile(
-        re.escape(package) + r"_[0-9][A-Za-z0-9.+-]*[~.]" + re.escape(codename)
-        + r"[0-9]+(?:[+.]pr" + re.escape(pr) + r"\.[0-9]+)?_" + re.escape(arch) + r"\.deb"
-    )
+    if package_format == "deb":
+        pattern = re.compile(
+            re.escape(package) + r"_[0-9][A-Za-z0-9.+-]*[~.]" + re.escape(release_id)
+            + r"[0-9]+(?:[+.]pr" + re.escape(pr) + r"\.[0-9]+)?_" + re.escape(arch) + r"\.deb"
+        )
+    else:
+        pattern = re.compile(
+            re.escape(package) + r"-[0-9][A-Za-z0-9.+-]*-[0-9]+\.fc"
+            + re.escape(release_id) + r"(?:[.+]pr" + re.escape(pr) + r"\.[0-9]+)?\."
+            + re.escape(arch) + r"\.rpm"
+        )
     found = []
     for asset in assets:
         name = asset.get("name") if isinstance(asset, dict) else None
@@ -224,7 +242,7 @@ def find(package):
         if isinstance(name, str) and isinstance(url, str) and pattern.fullmatch(name):
             found.append((name, url))
     if len(found) > 1:
-        sys.exit("more than one %s package for %s/%s in the release" % (package, codename, arch))
+        sys.exit("more than one %s package for %s/%s in the release" % (package, release_id, arch))
     return found[0] if found else None
 
 
@@ -239,17 +257,17 @@ for package in wanted:
     if asset is None:
         why = " (it is built for amd64 only)" if package.endswith("-plasma-6") and arch != "amd64" else ""
         sys.exit("the release has no %s package for %s/%s%s (the build of this PR may have failed or is not finished)"
-                 % (package, codename, arch, why))
+                 % (package, release_id, arch, why))
     print("%s\t%s\t%s" % (package, asset[0], asset[1]))
 PY
-)" || die "cannot pick the packages for Ubuntu $codename/$arch from release $tag (see the message above)"
+)" || die "cannot pick the packages for $os_id ${version_id:-?}/$arch from release $tag (see the message above)"
 
 [ -n "$selection" ] || die "no packages selected from release $tag"
 
 echo
-echo "Ubuntu ${version_id:-?} ($codename), $arch, desktop: $desktop"
+echo "$os_id ${version_id:-?}${codename:+ ($codename)}, $arch, desktop: $desktop"
 echo "Unreviewed test build of PR #$pr, installed as root. Packages:"
-debs=()
+package_files=()
 packages=()
 while IFS=$'\t' read -r package name asset_url; do
     # With GP_RELEASE_API set (tests, mirrors) any URL is fine; by default only
@@ -264,13 +282,13 @@ while IFS=$'\t' read -r package name asset_url; do
     curl -fsSL --connect-timeout 20 --max-time 600 -o "$tmp/$name" "$asset_url" \
         || die "cannot download $name"
     chmod 644 "$tmp/$name"
-    debs+=("$tmp/$name")
+    package_files+=("$tmp/$name")
     packages+=("$package")
 done <<< "$selection"
 
 # --- Install -----------------------------------------------------------------
 
-if [ "$codename" = "jammy" ]; then
+if [ "$package_format" = deb ] && [ "$codename" = "jammy" ]; then
     cat <<'EOF'
 
 Ubuntu 22.04 only: python3-sdbus is not in apt, install it with pip first
@@ -279,17 +297,16 @@ Ubuntu 22.04 only: python3-sdbus is not in apt, install it with pip first
 EOF
 fi
 
-apt_args=(install)
-[ "$assume_yes" -eq 1 ] && apt_args+=(-y)
-
 runner=()
 [ "$(id -u)" -eq 0 ] || runner=(sudo)
 
-echo
-echo "Running: ${runner[*]:+${runner[*]} }apt ${apt_args[*]} <the packages above>"
-"${runner[@]}" apt "${apt_args[@]}" "${debs[@]}" || die "apt failed, nothing more was done"
-
-cat <<EOF
+if [ "$package_format" = deb ]; then
+    apt_args=(install)
+    [ "$assume_yes" -eq 1 ] && apt_args+=(-y)
+    echo
+    echo "Running: ${runner[*]:+${runner[*]} }apt ${apt_args[*]} <the packages above>"
+    "${runner[@]}" apt "${apt_args[@]}" "${package_files[@]}" || die "apt failed, nothing more was done"
+    cat <<EOF
 
 Installed.
 
@@ -299,3 +316,20 @@ docs/APT_REPO.md:
 Without the apt repository: sudo apt remove ${packages[*]}
 and install the released packages again (https://github.com/$REPO/releases).
 EOF
+else
+    dnf_args=(install)
+    [ "$assume_yes" -eq 1 ] && dnf_args+=(-y)
+    echo
+    echo "Running: ${runner[*]:+${runner[*]} }dnf ${dnf_args[*]} <the packages above>"
+    "${runner[@]}" dnf "${dnf_args[@]}" "${package_files[@]}" || die "dnf failed, nothing more was done"
+    cat <<EOF
+
+Installed.
+
+Back to the released version, with the RPM repository set up as described in
+docs/RPM_REPO.md:
+    sudo dnf reinstall ${packages[*]}
+Without the repository: sudo dnf remove ${packages[*]}
+and install the released packages again (https://github.com/$REPO/releases).
+EOF
+fi

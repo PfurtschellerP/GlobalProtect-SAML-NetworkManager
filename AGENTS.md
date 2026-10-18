@@ -10,7 +10,8 @@ grows past that limit. Keep it short and move details into `docs/`.
 
 A NetworkManager VPN plugin for GlobalProtect with SAML/SSO authentication,
 packaged as `.deb` files for Ubuntu 22.04, 24.04, 24.10 and 26.04 on `amd64`
-and `arm64`, and published as a signed apt repository on GitHub Pages.
+and `arm64`, and as RPM files for Fedora 44 on `x86_64` and `aarch64`.
+Both repositories are published as signed repositories as a GitHub Pages deployment.
 
 | Path | Contents |
 |---|---|
@@ -19,8 +20,10 @@ and `arm64`, and published as a signed apt repository on GitHub Pages.
 | `auth-dialog/` | GTK dialog for credentials and one-time passwords |
 | `plugins/gnome/`, `plugins/plasma/` | Connection editor plugins (GTK3/GTK4, Plasma 5/6) |
 | `debian/` | Packaging; `debian/control.ubuntu<version>` is copied to `debian/control` per build |
-| `.github/workflows/` | `tests.yml` (unit tests), `build-release.yml` (matrix Ubuntu × arch), `publish-apt.yml` |
+| `rpm/` | Fedora 44 RPM spec and subpackages |
+| `.github/workflows/` | `tests.yml` (unit tests), `build-release.yml` (Ubuntu/Fedora × arch), `publish-package-repositories.yml` (APT/RPM Pages deployment) |
 | `.github/scripts/build-apt-repo.sh` | Builds the apt repository from release `.deb` files |
+| `.github/scripts/build-rpm-repo.sh` | Builds the RPM repository from release `.rpm` files |
 | `external/GlobalProtect-openconnect` | Git submodule (upstream `gpclient`/`gpauth`) |
 | `tests/unit/` | Unit tests (pytest), run anywhere |
 | `tests/test_*.py` | GUI tests (dogtail, needs an X11 session): see `CLAUDE_INSTRUCTIONS.md` |
@@ -46,17 +49,16 @@ make all                              # plugins + gpclient + gpauth (Rust, needs
 dpkg-buildpackage -us -uc -b          # packages, after: cp debian/control.ubuntu24.04 debian/control
 ```
 
-CI builds every Ubuntu version for `amd64` (`ubuntu-latest`) and `arm64`
-(`ubuntu-24.04-arm`) in Docker (`Dockerfile.ubuntu<version>`) on every pull
-request, except for changes to docs only (`**.md`, `docs/**`). A release can also
-have variants (`Dockerfile.ubuntu<version>-<variant>` with
-`debian/control.ubuntu<version>-<variant>`): `24.04-neon` builds
+CI builds every Ubuntu version and Fedora 44 for `amd64` and `arm64` in Docker (`Dockerfile.<platform>`) for every pull
+request, except when the changes are limited to documentation (`**.md`, `docs/**`).
+Releases can also have variants (`Dockerfile.<platform>-<variant>` with
+`debian/control.ubuntu<version>-<variant>`). For example, `24.04-neon` builds
 `network-manager-gpclient-plasma-6` for KDE neon, `amd64` only. To build a branch
 that has no PR, run the workflow by hand:
 
 ```bash
 # GitHub Actions → Build and Release → Run workflow (workflow_dispatch)
-# Release and apt publishing run only for tags (refs/tags/v*).
+# Release and APT/RPM publishing run only for tags (refs/tags/v*).
 ```
 
 ## Tests
@@ -110,7 +112,7 @@ Rules for tests:
 - The results are the PR's checks: each `Unit tests` job has a summary with the
   counts, and once the build succeeds a `Test packages` check carries the
   command that installs the PR's packages (`scripts/install-pr-build.sh <PR>`).
-  They live in the prerelease `pr-<N>` (never part of the apt repository) and
+  They live in the prerelease `pr-<N>` (never part of either package repository) and
   are deleted when the PR closes. `pr-test-packages.yml` is a `workflow_run`
   workflow: it runs only from `main`, so changes to it take effect after the
   merge. It must never check out or run PR code.

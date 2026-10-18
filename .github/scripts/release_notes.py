@@ -3,11 +3,10 @@
     gh release view v1.4.2 --json assets,body > release.json
     release_notes.py --repo OWNER/REPO --tag v1.4.2 --release-json release.json > new-body.md
 
-Used by .github/workflows/build-release.yml. The release has one .deb per package,
-Ubuntu release and architecture, so the notes start with a table: a row per
-Ubuntu release, a column per architecture, the packages of that pair in the
-cell. The links are those of the assets the release has and has finished
-uploading. The table is wrapped in markers and merged into the body of the
+Used by .github/workflows/build-release.yml. The release has one .deb per package, Ubuntu release and architecture, and one
+binary .rpm per package, Fedora release and architecture. The notes start with
+tables grouped by package format. The links are those of the assets the release
+has and has finished uploading. The tables are wrapped in markers and merged into the body of the
 release (GitHub's generated notes): it replaces the block between the markers,
 or, with no block yet, goes to the top. The rest of the body is kept byte for
 byte, so a rerun changes nothing. Standard library only.
@@ -30,10 +29,17 @@ NAME_RE = re.compile(
     r"(?P<package>[a-z0-9][a-z0-9+.-]*)_(?P<version>[0-9][A-Za-z0-9.+~-]*?)"
     r"[.~](?P<codename>[a-z]+)1_(?P<arch>[a-z0-9]+)\.deb"
 )
+# <package>-<version>-<release>.fc<release>.<arch>.rpm
+RPM_NAME_RE = re.compile(
+    r"(?P<package>network-manager-gpclient(?:-(?:gnome|plasma|plasma-6))?)-"
+    r"(?P<version>[0-9][A-Za-z0-9.+~-]*)"
+    r"-(?P<release>[0-9]+)\.fc(?P<fedora>[0-9]+)\.(?P<arch>x86_64|aarch64)\.rpm"
+)
 CORE = "network-manager-gpclient"
 # Short names in the order of a cell; any other package follows alphabetically
 ORDER = ["gpclient", "gnome", "plasma", "plasma-6"]
 UBUNTU = {"jammy": "22.04", "noble": "24.04", "oracular": "24.10", "resolute": "26.04"}
+FEDORA = {"44": "44"}
 EMPTY = "—"
 
 
@@ -55,6 +61,14 @@ def parse(name):
     if not match:
         raise NotesError("unexpected name of a .deb asset: %r" % (name,))
     return match.group("codename"), match.group("arch"), short_name(match.group("package"))
+
+
+def parse_rpm(name):
+    """(Fedora release, arch, short package name) of a binary RPM filename"""
+    match = RPM_NAME_RE.fullmatch(name)
+    if not match:
+        raise NotesError("unexpected name of a .rpm asset: %r" % (name,))
+    return match.group("fedora"), match.group("arch"), short_name(match.group("package"))
 
 
 def check_url(repo, name, url):
@@ -79,6 +93,17 @@ def row_label(codename):
     return codename
 
 
+def rpm_row_label(fedora):
+    return "Fedora %s" % FEDORA.get(fedora, fedora)
+
+
+def fedora_release_key(fedora):
+    """Known Fedora releases by version, then unknown releases numerically"""
+    if fedora in FEDORA:
+        return (0, int(FEDORA[fedora]))
+    return (1, int(fedora))
+
+
 def cell_key(item):
     short = item[0]
     return (ORDER.index(short), "") if short in ORDER else (len(ORDER), short)
@@ -91,6 +116,7 @@ def render(repo, tag, assets):
     if not tag:
         raise NotesError("the tag is empty")
     debs = []
+    rpms = []
     for asset in assets:
         name = asset.get("name") if isinstance(asset, dict) else None
         if not isinstance(name, str):
@@ -98,8 +124,11 @@ def render(repo, tag, assets):
         # only an asset that is "uploaded" has a download link that works
         if name.endswith(".deb") and asset.get("state") == "uploaded":
             debs.append((name, asset.get("url")))
-    if not debs:
-        raise NotesError("no .deb assets: refusing to write a release without downloads")
+        elif (name.endswith(".rpm") and not name.endswith(".src.rpm")
+              and asset.get("state") == "uploaded"):
+            rpms.append((name, asset.get("url")))
+    if not debs and not rpms:
+        raise NotesError("no .deb or binary .rpm assets: refusing to write a release without downloads")
 
     cells = {}
     seen = {}
@@ -111,35 +140,65 @@ def render(repo, tag, assets):
                              % (seen[codename, arch, short], name))
         seen[codename, arch, short] = name
         cells.setdefault((codename, arch), []).append((short, url))
+    rpm_cells = {}
+    rpm_seen = {}
+    for name, url in rpms:
+        fedora, arch, short = parse_rpm(name)
+        check_url(repo, name, url)
+        if (fedora, arch, short) in rpm_seen:
+            raise NotesError("two RPM assets for the same package, release and architecture: %r and %r"
+                             % (rpm_seen[fedora, arch, short], name))
+        rpm_seen[fedora, arch, short] = name
+        rpm_cells.setdefault((fedora, arch), []).append((short, url))
+
     arches = sorted({arch for _codename, arch in cells}, key=lambda a: (a != "amd64", a))
     codenames = sorted({codename for codename, _arch in cells}, key=release_key)
+    rpm_arches = sorted({arch for _fedora, arch in rpm_cells}, key=lambda a: (a != "x86_64", a))
+    fedora_releases = sorted({fedora for fedora, _arch in rpm_cells}, key=fedora_release_key)
 
     base = "https://github.com/%s" % repo
     blob = "%s/blob/%s" % (base, urllib.parse.quote(tag, safe="/"))
-    lines = [
-        START,
-        "## Downloads",
-        "",
-        "The recommended way to install is the apt repository: see "
-        "[docs/APT_REPO.md](%s/docs/APT_REPO.md). With single files, take "
-        "`network-manager-gpclient` and one desktop package (`-gnome`, `-plasma` or, "
-        "on KDE neon, `-plasma-6`) from the same row and architecture and install them together, "
-        "e.g. `sudo apt install ./network-manager-gpclient_*.deb "
-        "./network-manager-gpclient-gnome_*.deb`. On Ubuntu 22.04 `python3-sdbus` is "
-        "not in apt: see the [README](%s/README.md) first." % (blob, blob),
-        "",
-        "| Ubuntu | " + " | ".join(arches) + " |",
-        "|---|" + "---|" * len(arches),
-    ]
-    for codename in codenames:
-        row = []
-        for arch in arches:
-            links = [
-                "[%s](%s)" % (short, url)
-                for short, url in sorted(cells.get((codename, arch), []), key=cell_key)
-            ]
-            row.append("<br>".join(links) or EMPTY)
-        lines.append("| %s | %s |" % (row_label(codename), " | ".join(row)))
+    lines = [START, "## Downloads", ""]
+    if debs:
+        lines.extend([
+            "The recommended way to install Debian packages is the apt repository: see "
+            "[docs/APT_REPO.md](%s/docs/APT_REPO.md). With single files, take "
+            "`network-manager-gpclient` and one desktop package (`-gnome`, `-plasma` or, "
+            "on KDE neon, `-plasma-6`) from the same row and architecture and install them together, "
+            "e.g. `sudo apt install ./network-manager-gpclient_*.deb "
+            "./network-manager-gpclient-gnome_*.deb`. On Ubuntu 22.04 `python3-sdbus` is "
+            "not in apt: see the [README](%s/README.md) first." % (blob, blob),
+            "",
+            "| Ubuntu | " + " | ".join(arches) + " |",
+            "|---|" + "---|" * len(arches),
+        ])
+        for codename in codenames:
+            row = []
+            for arch in arches:
+                links = [
+                    "[%s](%s)" % (short, url)
+                    for short, url in sorted(cells.get((codename, arch), []), key=cell_key)
+                ]
+                row.append("<br>".join(links) or EMPTY)
+            lines.append("| %s | %s |" % (row_label(codename), " | ".join(row)))
+    if rpms:
+        lines.extend([
+            "",
+            "The RPM packages are available from the signed RPM repository: see "
+            "[docs/RPM_REPO.md](%s/docs/RPM_REPO.md)." % blob,
+            "",
+            "| Fedora | " + " | ".join(rpm_arches) + " |",
+            "|---|" + "---|" * len(rpm_arches),
+        ])
+        for fedora in fedora_releases:
+            row = []
+            for arch in rpm_arches:
+                links = [
+                    "[%s](%s)" % (short, url)
+                    for short, url in sorted(rpm_cells.get((fedora, arch), []), key=cell_key)
+                ]
+                row.append("<br>".join(links) or EMPTY)
+            lines.append("| %s | %s |" % (rpm_row_label(fedora), " | ".join(row)))
     lines.append(END)
     return "\n".join(lines)
 

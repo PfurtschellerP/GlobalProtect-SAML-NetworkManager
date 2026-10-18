@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GlobalProtect NetworkManager plugin &mdash; apt repository</title>
+<title>GlobalProtect NetworkManager plugin &mdash; package repositories</title>
 <style>
   :root { color-scheme: light dark; }
   body {
@@ -33,9 +33,11 @@
 <body>
 
 <h1>GlobalProtect VPN plugin for NetworkManager</h1>
-<p class="sub">apt repository for Ubuntu &mdash; SAML/SSO GlobalProtect connections in GNOME&nbsp;Settings and KDE&nbsp;Plasma.</p>
+<p class="sub">APT and RPM repositories for Ubuntu and Fedora &mdash; SAML/SSO GlobalProtect connections in GNOME&nbsp;Settings and KDE&nbsp;Plasma.</p>
 
 <h2>Install</h2>
+
+<h3>Ubuntu</h3>
 
 <pre><code>curl -fsSL https://wmp.github.io/GlobalProtect-SAML-NetworkManager/gpclient-archive-keyring.gpg \
   | sudo tee /usr/share/keyrings/gpclient-archive-keyring.gpg &gt; /dev/null
@@ -54,14 +56,38 @@ sudo apt install network-manager-gpclient-plasma-6</code></pre>
 <p>Then add the VPN in your desktop's network settings: <em>Add VPN &rarr; GlobalProtect</em>,
 enter the portal address, connect.</p>
 
-<h2>Available releases</h2>
+<h4>Available releases</h4>
 
 <table>
   <tr><th>Ubuntu</th><th>Version</th></tr>
-  __VERSION_ROWS__
+  __VERSION_ROWS_UBUNTU__
 </table>
 
-<p>Architectures: <code>amd64</code> and <code>arm64</code>.</p>
+<p>Ubuntu architectures: <code>amd64</code> and <code>arm64</code>.</p>
+
+<h3>Fedora and compatible distributions</h3>
+
+<p>Fedora 44 releases for <code>x86_64</code> and <code>aarch64</code> are available from the signed
+<a href="rpm/">RPM repository</a>:</p>
+
+<pre><code>sudo rpm --import https://wmp.github.io/GlobalProtect-SAML-NetworkManager/rpm/gpclient-rpm-keyring.gpg
+sudo tee /etc/yum.repos.d/gpclient.repo &lt;&lt;'EOF'
+[gpclient]
+name=GlobalProtect NetworkManager plugin
+baseurl=https://wmp.github.io/GlobalProtect-SAML-NetworkManager/rpm
+enabled=1
+gpgcheck=0
+repo_gpgcheck=1
+gpgkey=https://wmp.github.io/GlobalProtect-SAML-NetworkManager/rpm/gpclient-rpm-keyring.gpg
+EOF
+sudo dnf install network-manager-gpclient-gnome</code></pre>
+
+<h4>Available releases</h4>
+
+<table>
+  <tr><th>Fedora</th><th>Version</th></tr>
+  __VERSION_ROWS_FEDORA__
+</table>
 
 <h2>Uninstall</h2>
 
@@ -69,6 +95,11 @@ enter the portal address, connect.</p>
 sudo apt remove network-manager-gpclient
 sudo rm /etc/apt/sources.list.d/gpclient.list /usr/share/keyrings/gpclient-archive-keyring.gpg
 sudo apt update</code></pre>
+
+<p>For Fedora, remove the installed packages with
+<code>sudo dnf remove network-manager-gpclient network-manager-gpclient-gnome</code>
+and remove <code>/etc/yum.repos.d/gpclient.repo</code> if the repository is no
+longer needed.</p>
 
 <h2>Signing key</h2>
 

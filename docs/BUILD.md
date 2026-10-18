@@ -71,19 +71,23 @@ source $HOME/.cargo/env
 
 ## Building
 
-### Build Debian packages (recommended):
+### Build packages (recommended):
 
 ```bash
-# Build for all supported Ubuntu versions (uses Docker)
+# Build for all supported distributions and versions (uses Docker)
 ./build-all.sh
 
-# Build for specific version
-./build-all.sh 26.04
-./build-all.sh 24.04
-./build-all.sh 22.04
+# Build for a specific Ubuntu version
+./build-all.sh ubuntu26.04
+./build-all.sh ubuntu24.04
+./build-all.sh ubuntu22.04
+
+# Build Fedora 44 RPM packages
+./build-all.sh fedora44
 ```
 
-Packages will be in `output/ubuntu26.04/`, `output/ubuntu24.04/` or `output/ubuntu22.04/`.
+Packages will be in `output/ubuntu26.04/`, `output/ubuntu24.04/`,
+`output/ubuntu22.04/`, or `output/fedora44/`.
 
 ### Build individual components (for development):
 

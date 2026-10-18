@@ -1,0 +1,47 @@
+FROM fedora:44
+
+LABEL maintainer="WMP"
+LABEL description="Build environment for network-manager-gpclient RPM packages"
+
+RUN dnf -y install \
+    autoconf \
+    automake \
+    libtool \
+    git \
+    rpm-build \
+    rpmdevtools \
+    cargo \
+    cmake \
+    gcc \
+    gcc-c++ \
+    make \
+    pkgconf-pkg-config \
+    glib2-devel \
+    gtk3-devel \
+    gtk4-devel \
+    libnma-devel \
+    libnma-gtk4-devel \
+    NetworkManager-libnm-devel \
+    openconnect-devel \
+    openssl-devel \
+    libxml2-devel \
+    libsoup3-devel \
+    javascriptcoregtk4.1-devel \
+    webkit2gtk4.1-devel \
+    plasma-nm \
+    python3-devel \
+    python3-pip \
+    qt6-qtbase-devel \
+    qt6-qttools-devel \
+    extra-cmake-modules \
+    kf6-ki18n-devel \
+    kf6-kservice-devel \
+    kf6-kwidgetsaddons-devel \
+    kf6-networkmanager-qt-devel \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+RUN python3 -m pip install --no-cache-dir sdbus
+
+WORKDIR /source
+CMD ["bash"]

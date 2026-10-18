@@ -12,16 +12,17 @@ on:
       - "docs/**"
   workflow_dispatch:
     inputs:
-      ubuntu_version:
-        description: "Ubuntu version to build"
+      os_version:
+        description: "OS version to build"
         required: true
-        default: "24.04"
+        default: "ubuntu24.04"
         type: choice
         options:
-          - "22.04"
-          - "24.04"
-          - "24.10"
-          - "26.04"
+          - "ubuntu22.04"
+          - "ubuntu24.04"
+          - "ubuntu24.10"
+          - "ubuntu26.04"
+          - "fedora44"
           - "all"
 
 # Read-only by default (pull requests run the build); only the release job
@@ -44,8 +45,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        # Only a manual run can pick one version; tags and pull requests build all.
-        ubuntu: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.ubuntu_version == 'all' && fromJSON('["22.04", "24.04", "24.10", "26.04"]') || fromJSON(format('["{0}"]', github.event.inputs.ubuntu_version))) || fromJSON('["22.04", "24.04", "24.10", "26.04"]') }}
+        # A manual run can select one OS version; tags and pull requests build all.
+        platform: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.os_version == 'all' && fromJSON('["ubuntu22.04", "ubuntu24.04", "ubuntu24.10", "ubuntu26.04", "fedora44"]') || fromJSON(format('["{0}"]', github.event.inputs.os_version))) || fromJSON('["ubuntu22.04", "ubuntu24.04", "ubuntu24.10", "ubuntu26.04", "fedora44"]') }}
         arch: [amd64, arm64]
         include:
           - arch: amd64
@@ -63,6 +64,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build Debian packages
+        if: startsWith(matrix.platform, 'ubuntu')
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -83,7 +85,8 @@ jobs:
             pr_suffix="+pr${PR_NUMBER}.${RUN_NUMBER}"
           fi
 
-          ubuntu="${{ matrix.ubuntu }}"
+          platform="${{ matrix.platform }}"
+          ubuntu="${platform#ubuntu}"
           arch="${{ matrix.arch }}"
           out="output/ubuntu${ubuntu}-${arch}"
 
@@ -164,17 +167,18 @@ jobs:
           done
 
       - name: Verify .deb files exist
+        if: startsWith(matrix.platform, 'ubuntu')
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           RUN_NUMBER: ${{ github.run_number }}
         run: |
-          if ! ls output/ubuntu${{ matrix.ubuntu }}-${{ matrix.arch }}/*.deb 1>/dev/null 2>&1; then
+          if ! ls output/${{ matrix.platform }}-${{ matrix.arch }}/*.deb 1>/dev/null 2>&1; then
             echo "ERROR: No .deb files produced!"
             exit 1
           fi
           # A wrong-architecture .deb would land in the wrong apt Packages index
-          for deb in output/ubuntu${{ matrix.ubuntu }}-${{ matrix.arch }}/*.deb; do
+          for deb in output/${{ matrix.platform }}-${{ matrix.arch }}/*.deb; do
             deb_arch=$(dpkg-deb -f "$deb" Architecture)
             if [ "$deb_arch" != "${{ matrix.arch }}" ]; then
               echo "ERROR: $deb has Architecture '$deb_arch', expected '${{ matrix.arch }}'"
@@ -189,7 +193,7 @@ jobs:
           else
             version_re='~[a-z]+1$'
           fi
-          for deb in output/ubuntu${{ matrix.ubuntu }}-${{ matrix.arch }}/*.deb; do
+          for deb in output/${{ matrix.platform }}-${{ matrix.arch }}/*.deb; do
             deb_version=$(dpkg-deb -f "$deb" Version)
             if ! [[ "$deb_version" =~ $version_re ]]; then
               echo "ERROR: $deb has version '$deb_version', expected it to match '$version_re'"
@@ -197,13 +201,14 @@ jobs:
             fi
           done
           echo "Built packages:"
-          ls -la output/ubuntu${{ matrix.ubuntu }}-${{ matrix.arch }}/*.deb
+          ls -la output/${{ matrix.platform }}-${{ matrix.arch }}/*.deb
 
       - name: Upload artifacts
+        if: startsWith(matrix.platform, 'ubuntu')
         uses: actions/upload-artifact@v4
         with:
-          name: debs-ubuntu-${{ matrix.ubuntu }}-${{ matrix.arch }}
-          path: output/ubuntu${{ matrix.ubuntu }}-${{ matrix.arch }}/*.deb
+          name: debs-${{ matrix.platform }}-${{ matrix.arch }}
+          path: output/${{ matrix.platform }}-${{ matrix.arch }}/*.deb
 
       - name: Upgrade test from the last release
         # Not for tags (the only push trigger): a network flake in a check must
@@ -215,9 +220,9 @@ jobs:
         # Ubuntu 24.04 variant with Plasma 6) skips itself where no such
         # package was built. The containers write the GUI smoke test
         # screenshots to gui-smoke/, uploaded by the next step.
-        if: github.event_name != 'push'
+        if: github.event_name != 'push' && startsWith(matrix.platform, 'ubuntu')
         env:
-          UBUNTU: ${{ matrix.ubuntu }}
+          UBUNTU: ${{ matrix.platform == 'ubuntu22.04' && '22.04' || matrix.platform == 'ubuntu24.04' && '24.04' || matrix.platform == 'ubuntu24.10' && '24.10' || '26.04' }}
           ARCH: ${{ matrix.arch }}
         run: |
           failed=""
@@ -225,7 +230,7 @@ jobs:
           for scenario in gnome plasma neon; do
             echo "::group::Upgrade test: $scenario"
             if ! docker run --rm \
-                -v "$PWD/output/ubuntu${UBUNTU}-${ARCH}:/debs:ro" \
+                -v "$PWD/output/${{ matrix.platform }}-${ARCH}:/debs:ro" \
                 -v "$PWD/.github/scripts:/scripts:ro" \
                 -v "$PWD/gui-smoke:/out" \
                 "ubuntu:${UBUNTU}" bash /scripts/upgrade-test.sh "$scenario" /debs /out; then
@@ -242,12 +247,100 @@ jobs:
         # Screenshots of the connection editor from the upgrade test (see
         # .github/scripts/gui-smoke.sh); also kept when that test failed. Not
         # for tags, like the test.
-        if: always() && github.event_name != 'push'
+        if: always() && github.event_name != 'push' && startsWith(matrix.platform, 'ubuntu')
         uses: actions/upload-artifact@v4
         with:
-          name: gui-smoke-ubuntu-${{ matrix.ubuntu }}-${{ matrix.arch }}
+          name: gui-smoke-${{ matrix.platform }}-${{ matrix.arch }}
           path: gui-smoke/*.png
           if-no-files-found: ignore
+
+      - name: Build RPM packages
+        if: startsWith(matrix.platform, 'fedora')
+        env:
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '0.0.0' }}
+        run: |
+          set -e
+          version="${VERSION#v}"
+          platform="${{ matrix.platform }}"
+          output="output/${platform}-${{ matrix.arch }}"
+          docker build \
+            --platform "linux/${{ matrix.arch == 'amd64' && 'amd64' || 'arm64' }}" \
+            -t "gpclient-builder:${platform}" -f Dockerfile.fedora44 .
+          docker run --rm --platform "linux/${{ matrix.arch == 'amd64' && 'amd64' || 'arm64' }}" \
+            -e RPM_OUTPUT="$output" -e RPM_VERSION="$version" \
+            -v "$PWD:/source" -w /source "gpclient-builder:${platform}" bash -c '
+              set -e
+              root=/source
+              rm -rf "$RPM_OUTPUT" "$root/rpmbuild"
+              mkdir -p "$RPM_OUTPUT" "$root/rpmbuild"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+              git config --global --add safe.directory "$root"
+              git -C "$root" submodule update --init --recursive
+              tar --exclude=.git --exclude=rpmbuild --exclude=output \
+                --transform "s,^source,network-manager-gpclient-$RPM_VERSION," \
+                -czf "$root/rpmbuild/SOURCES/network-manager-gpclient-$RPM_VERSION.tar.gz" \
+                -C / source
+              cp "$root/rpm/network-manager-gpclient.spec" "$root/rpmbuild/SPECS/"
+              rpmbuild -bb --define "project_version $RPM_VERSION" \
+                --define "_topdir $root/rpmbuild" \
+                "$root/rpmbuild/SPECS/network-manager-gpclient.spec"
+              find "$root/rpmbuild/RPMS" -type f -name "*.rpm" \
+                ! -name "*-debugsource-*.rpm" ! -name "*-debuginfo-*.rpm" \
+                -exec cp {} "$RPM_OUTPUT/" \;
+              find "$root/rpmbuild/SRPMS" -name "*.src.rpm" -exec cp {} "$RPM_OUTPUT/" \;
+              test -n "$(find "$RPM_OUTPUT" -type f -name "*.rpm" -print -quit)"
+            '
+
+      - name: Verify .rpm files exist
+        if: startsWith(matrix.platform, 'fedora')
+        env:
+          RPM_OUTPUT: output/${{ matrix.platform }}-${{ matrix.arch }}
+          FEDORA_VERSION: ${{ matrix.platform == 'fedora44' && '44' }}
+          EXPECTED_ARCH: ${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
+        run: |
+          set -e
+          if ! compgen -G "$RPM_OUTPUT/*.rpm" >/dev/null; then
+            echo "ERROR: No .rpm files produced!"
+            exit 1
+          fi
+          mapfile -t rpms < <(find "$RPM_OUTPUT" -maxdepth 1 -type f -name '*.rpm' ! -name '*.src.rpm' -print | sort)
+          if [ "${#rpms[@]}" -eq 0 ]; then
+            echo "ERROR: No binary .rpm files produced!"
+            exit 1
+          fi
+          printf '%s\n' "${rpms[@]}" | docker run --rm -i \
+            -v "$PWD/$RPM_OUTPUT:/rpms:ro" "fedora:${FEDORA_VERSION}" \
+            bash -c '
+              set -e
+              expected="network-manager-gpclient network-manager-gpclient-gnome network-manager-gpclient-plasma"
+              actual=$(for rpm in /rpms/*.rpm; do
+                case "$rpm" in *.src.rpm) continue ;; esac
+                rpm -qp --qf "%{NAME} %{ARCH}\n" "$rpm"
+              done | sort)
+              expected_arch="'"$EXPECTED_ARCH"'"
+              while read -r name arch; do
+                if [ "$arch" != "$expected_arch" ]; then
+                  echo "ERROR: $name has architecture $arch, expected $expected_arch"
+                  exit 1
+                fi
+              done <<< "$actual"
+              expected_names=$(printf "%s\n" $expected | sort)
+              actual_names=$(printf "%s\n" "$actual" | awk "{print \$1}")
+              if [ "$actual_names" != "$expected_names" ]; then
+                echo "ERROR: expected RPM packages:"
+                printf "%s\n" "$expected_names"
+                echo "found:"
+                printf "%s\n" "$actual_names"
+                exit 1
+              fi
+              printf "%s\n" "$actual"
+            '
+
+      - name: Upload RPM artifacts
+        if: startsWith(matrix.platform, 'fedora')
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpms-${{ matrix.platform }}-${{ matrix.arch }}
+          path: output/${{ matrix.platform }}-${{ matrix.arch }}/*.rpm
 
   release:
     needs: build
@@ -268,14 +361,16 @@ jobs:
           # and the architecture (network-manager-gpclient_1.4.0-1~noble1_amd64.deb),
           # so no renaming is needed to keep them unique across all builds.
           mkdir -p release-files
-          find artifacts -name '*.deb' -exec cp {} release-files/ \;
+          find artifacts \( -name '*.deb' -o -name '*.rpm' \) -exec cp {} release-files/ \;
           echo "Release files:"
           ls -la release-files/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release-files/*.deb
+          files: |
+            release-files/*.deb
+            release-files/*.rpm
           generate_release_notes: true
           fail_on_unmatched_files: true
 
